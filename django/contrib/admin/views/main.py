@@ -1,12 +1,12 @@
 from django.contrib.admin.filterspecs import FilterSpec
-from django.contrib.admin.options import IncorrectLookupParameters
+from django.contrib.admin.options import IncorrectLookupParameters, RETURN_GET_PARAM
 from django.contrib.admin.util import quote
 from django.core.paginator import Paginator, InvalidPage
 from django.db import models
 from django.db.models.query import QuerySet
 from django.utils.encoding import force_unicode, smart_str
 from django.utils.translation import ugettext
-from django.utils.http import urlencode
+from django.utils.http import urlencode, urlquote
 import operator
 
 try:
@@ -70,6 +70,7 @@ class ChangeList(object):
         self.title = (self.is_popup and ugettext('Select %s') % force_unicode(self.opts.verbose_name) or ugettext('Select %s to change') % force_unicode(self.opts.verbose_name))
         self.filter_specs, self.has_filters = self.get_filters(request)
         self.pk_attname = self.lookup_opts.pk.attname
+        self.this_clist_url = request.get_full_path()
 
     def get_filters(self, request):
         filter_specs = []
@@ -247,4 +248,4 @@ class ChangeList(object):
         return qs
 
     def url_for_result(self, result):
-        return "%s/" % quote(getattr(result, self.pk_attname))
+        return "%s/?%s=%s" % (quote(getattr(result, self.pk_attname)), RETURN_GET_PARAM, urlquote(self.this_clist_url))

@@ -17,6 +17,7 @@ from django.utils.decorators import method_decorator
 from django.utils.datastructures import SortedDict
 from django.utils.functional import update_wrapper
 from django.utils.html import escape
+from django.utils.http import urlquote
 from django.utils.safestring import mark_safe
 from django.utils.functional import curry
 from django.utils.text import capfirst, get_text_list
@@ -31,6 +32,10 @@ except NameError:
 HORIZONTAL, VERTICAL = 1, 2
 # returns the <ul> class for a given radio_admin field
 get_ul_class = lambda x: 'radiolist%s' % ((x == HORIZONTAL) and ' inline' or '')
+
+# GET parameter for the URL to return to after change/add views. This lets the
+# admin save the state of the changelist page through the change/add page.
+RETURN_GET_PARAM = '_return_to'
 
 class IncorrectLookupParameters(Exception):
     pass
@@ -640,21 +645,42 @@ class ModelAdmin(BaseModelAdmin):
         pk_value = obj._get_pk_val()
 
         msg = _('The %(name)s "%(obj)s" was added successfully.') % {'name': force_unicode(opts.verbose_name), 'obj': force_unicode(obj)}
-        # Here, we distinguish between different save types by checking for
+        # Below, we distinguish between different save types by checking for
         # the presence of keys in request.POST.
+
+        # The user clicked "save and continue editing". Redirect to admin URL
+        # for this object, possibly in popup mode if needed.
+
         if request.POST.has_key("_continue"):
             self.message_user(request, msg + ' ' + _("You may edit it again below."))
             if request.POST.has_key("_popup"):
                 post_url_continue += "?_popup=1"
+            else:
+                if request.GET.has_key(RETURN_GET_PARAM):
+                    post_url_continue += "?%s=%s" % (RETURN_GET_PARAM, request.GET[RETURN_GET_PARAM])
             return HttpResponseRedirect(post_url_continue % pk_value)
 
+        # This was a popup and the user clicked the simple "save" button.
+        # Return a little script which populates the calling page with the
+        # saved key.
         if request.POST.has_key("_popup"):
             return HttpResponse('<script type="text/javascript">opener.dismissAddAnotherPopup(window, "%s", "%s");</script>' % \
                 # escape() calls force_unicode.
                 (escape(pk_value), escape(obj)))
+
+        # The user clicked "save and add another", so redirect back to the bare
+        # "add" page, which will be request.path.
         elif request.POST.has_key("_addanother"):
             self.message_user(request, msg + ' ' + (_("You may add another %s below.") % force_unicode(opts.verbose_name)))
-            return HttpResponseRedirect(request.path)
+            post_url = request.path
+            if request.GET.has_key(RETURN_GET_PARAM):
+                post_url += "?%s=%s" % (RETURN_GET_PARAM, request.GET[RETURN_GET_PARAM])
+            return HttpResponseRedirect(post_url)
+
+        # Just a regular "save" click. IF we've been pased an explicit return
+        # URL in GET, go there. Otherwise, redirect to the plain changelist.
+        # If the user doesn't have changelist permission, just redirect back
+        # to the main admin index.
         else:
             self.message_user(request, msg)
 
@@ -662,7 +688,7 @@ class ModelAdmin(BaseModelAdmin):
             # redirect to the change-list page for this object. Otherwise,
             # redirect to the admin index.
             if self.has_change_permission(request, None):
-                post_url = '../'
+                post_url = request.GET.get(RETURN_GET_PARAM, '../')
             else:
                 post_url = '../../../'
             return HttpResponseRedirect(post_url)
@@ -680,17 +706,28 @@ class ModelAdmin(BaseModelAdmin):
             if request.REQUEST.has_key('_popup'):
                 return HttpResponseRedirect(request.path + "?_popup=1")
             else:
-                return HttpResponseRedirect(request.path)
+                post_url = request.path
+                if request.GET.has_key(RETURN_GET_PARAM):
+                    post_url += "?%s=%s" % (RETURN_GET_PARAM, request.GET[RETURN_GET_PARAM])
+                return HttpResponseRedirect(post_url)
         elif request.POST.has_key("_saveasnew"):
             msg = _('The %(name)s "%(obj)s" was added successfully. You may edit it again below.') % {'name': force_unicode(opts.verbose_name), 'obj': obj}
             self.message_user(request, msg)
-            return HttpResponseRedirect("../%s/" % pk_value)
+            post_url = "../%s/" % pk_value
+            if request.GET.has_key(RETURN_GET_PARAM):
+                post_url += "?%s=%s" % (RETURN_GET_PARAM, request.GET[RETURN_GET_PARAM])
+            return HttpResponseRedirect(post_url)
         elif request.POST.has_key("_addanother"):
             self.message_user(request, msg + ' ' + (_("You may add another %s below.") % force_unicode(opts.verbose_name)))
-            return HttpResponseRedirect("../add/")
+            post_url = "../add/"
+            if request.GET.has_key(RETURN_GET_PARAM):
+                post_url += "?%s=%s" % (RETURN_GET_PARAM, request.GET[RETURN_GET_PARAM])
+            return HttpResponseRedirect(post_url)
         else:
             self.message_user(request, msg)
-            return HttpResponseRedirect("../")
+            post_url = request.GET.get(RETURN_GET_PARAM, '../')
+            return HttpResponseRedirect(post_url)
+
 
     def response_action(self, request, queryset):
         """
@@ -769,6 +806,7 @@ class ModelAdmin(BaseModelAdmin):
 
         ModelForm = self.get_form(request)
         formsets = []
+        return_to = request.GET.get(RETURN_GET_PARAM, None)
         if request.method == 'POST':
             form = ModelForm(request.POST, request.FILES)
             if form.is_valid():
@@ -819,6 +857,9 @@ class ModelAdmin(BaseModelAdmin):
                                   queryset=inline.queryset(request))
                 formsets.append(formset)
 
+        if return_to:
+            form_url = form_url + '?%s=%s' % (RETURN_GET_PARAM, urlquote(return_to))
+
         adminForm = helpers.AdminForm(form, list(self.get_fieldsets(request)),
             self.prepopulated_fields, self.get_readonly_fields(request),
             model_admin=self)
@@ -867,6 +908,7 @@ class ModelAdmin(BaseModelAdmin):
 
         ModelForm = self.get_form(request, obj)
         formsets = []
+        return_to = request.GET.get(RETURN_GET_PARAM, None)
         if request.method == 'POST':
             form = ModelForm(request.POST, request.FILES, instance=obj)
             if form.is_valid():
@@ -910,6 +952,11 @@ class ModelAdmin(BaseModelAdmin):
                                   queryset=inline.queryset(request))
                 formsets.append(formset)
 
+        if return_to:
+            form_url = '?%s=%s' % (RETURN_GET_PARAM, urlquote(return_to))
+        else:
+            form_url = ''
+
         adminForm = helpers.AdminForm(form, self.get_fieldsets(request, obj),
             self.prepopulated_fields, self.get_readonly_fields(request, obj),
             model_admin=self)
@@ -937,7 +984,7 @@ class ModelAdmin(BaseModelAdmin):
             'app_label': opts.app_label,
         }
         context.update(extra_context or {})
-        return self.render_change_form(request, context, change=True, obj=obj)
+        return self.render_change_form(request, context, change=True, form_url=form_url, obj=obj)
 
     @csrf_protect_m
     def changelist_view(self, request, extra_context=None):
@@ -1038,6 +1085,10 @@ class ModelAdmin(BaseModelAdmin):
         selection_note_all = ungettext('%(total_count)s selected',
             'All %(total_count)s selected', cl.result_count)
 
+        return_to = ''
+        if request.META['QUERY_STRING']:
+            return_to = "?%s=%s" % (RETURN_GET_PARAM, urlquote(cl.this_clist_url))
+
         context = {
             'module_name': force_unicode(opts.verbose_name_plural),
             'selection_note': selection_note % {'count': len(cl.result_list)},
@@ -1053,6 +1104,7 @@ class ModelAdmin(BaseModelAdmin):
             'actions_on_top': self.actions_on_top,
             'actions_on_bottom': self.actions_on_bottom,
             'actions_selection_counter': self.actions_selection_counter,
+            'return_to': return_to,
         }
         context.update(extra_context or {})
         context_instance = template.RequestContext(request, current_app=self.admin_site.name)
