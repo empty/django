@@ -2,7 +2,7 @@
 
 import sys
 import re
-from itertools import cycle as itertools_cycle
+from itertools import groupby, cycle as itertools_cycle
 
 from django.template import Node, NodeList, Template, Context, Variable
 from django.template import TemplateSyntaxError, VariableDoesNotExist, BLOCK_TAG_START, BLOCK_TAG_END, VARIABLE_TAG_START, VARIABLE_TAG_END, SINGLE_BRACE_START, SINGLE_BRACE_END, COMMENT_TAG_START, COMMENT_TAG_END
@@ -10,7 +10,6 @@ from django.template import get_library, Library, InvalidTemplateLibrary
 from django.template.smartif import IfParser, Literal
 from django.conf import settings
 from django.utils.encoding import smart_str, smart_unicode
-from django.utils.itercompat import groupby
 from django.utils.safestring import mark_safe
 
 register = Library()
@@ -243,7 +242,12 @@ class IfNode(Node):
             yield node
 
     def render(self, context):
-        if self.var.eval(context):
+        try:
+            var = self.var.eval(context)
+        except VariableDoesNotExist:
+            var = None
+
+        if var:
             return self.nodelist_true.render(context)
         else:
             return self.nodelist_false.render(context)
@@ -1065,10 +1069,6 @@ def templatetag(parser, token):
     return TemplateTagNode(tag)
 templatetag = register.tag(templatetag)
 
-# Backwards compatibility check which will fail against for old comma
-# separated arguments in the url tag.
-url_backwards_re = re.compile(r'''(('[^']*'|"[^"]*"|[^,]+)=?)+$''')
-
 def url(parser, token):
     """
     Returns an absolute URL matching given view with its parameters.
@@ -1117,13 +1117,38 @@ def url(parser, token):
         asvar = bits[-1]
         bits = bits[:-2]
 
-    # Backwards compatibility: {% url urlname arg1,arg2 %} or
-    # {% url urlname arg1,arg2 as foo %} cases.
-    if bits:
-        old_args = ''.join(bits)
-        if not url_backwards_re.match(old_args):
-            bits = old_args.split(",")
+    # Backwards compatibility: check for the old comma separated format
+    # {% url urlname arg1,arg2 %}
+    # Initial check - that the first space separated bit has a comma in it
+    if bits and ',' in bits[0]:
+        check_old_format = True
+        # In order to *really* be old format, there must be a comma
+        # in *every* space separated bit, except the last.
+        for bit in bits[1:-1]:
+            if ',' not in bit:
+                # No comma in this bit. Either the comma we found
+                # in bit 1 was a false positive (e.g., comma in a string),
+                # or there is a syntax problem with missing commas
+                check_old_format = False
+                break
+    else:
+        # No comma found - must be new format.
+        check_old_format = False
 
+    if check_old_format:
+        # Confirm that this is old format by trying to parse the first
+        # argument. An exception will be raised if the comma is
+        # unexpected (i.e. outside of a static string).
+        match = kwarg_re.match(bits[0])
+        if match:
+            value = match.groups()[1]
+            try:
+                parser.compile_filter(value)
+            except TemplateSyntaxError:
+                bits = ''.join(bits).split(',')
+
+    # Now all the bits are parsed into new format,
+    # process them as template vars
     if len(bits):
         for bit in bits:
             match = kwarg_re.match(bit)

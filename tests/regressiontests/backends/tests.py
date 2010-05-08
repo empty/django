@@ -22,6 +22,16 @@ class Callproc(unittest.TestCase):
         else:
             return True
 
+    def test_cursor_var(self):
+        # If the backend is Oracle, test that we can pass cursor variables
+        # as query parameters.
+        if settings.DATABASES[DEFAULT_DB_ALIAS]['ENGINE'] == 'django.db.backends.oracle':
+            cursor = connection.cursor()
+            var = cursor.var(backend.Database.STRING)
+            cursor.execute("BEGIN %s := 'X'; END; ", [var])
+            self.assertEqual(var.getvalue(), 'X')
+
+
 class LongString(unittest.TestCase):
 
     def test_long_string(self):
@@ -34,8 +44,8 @@ class LongString(unittest.TestCase):
             c.execute('INSERT INTO ltext VALUES (%s)',[long_str])
             c.execute('SELECT text FROM ltext')
             row = c.fetchone()
-            c.execute('DROP TABLE ltext')
             self.assertEquals(long_str, row[0].read())
+            c.execute('DROP TABLE ltext')
 
 class DateQuotingTest(TestCase):
 

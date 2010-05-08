@@ -1,5 +1,6 @@
 import datetime
 import unittest
+from decimal import Decimal
 
 import django.test
 from django import forms
@@ -7,12 +8,6 @@ from django.db import models
 from django.core.exceptions import ValidationError
 
 from models import Foo, Bar, Whiz, BigD, BigS, Image, BigInt, Post, NullBooleanModel, BooleanModel
-
-try:
-    from decimal import Decimal
-except ImportError:
-    from django.utils._decimal import Decimal
-
 
 # If PIL available, do these tests.
 if Image:
@@ -190,6 +185,13 @@ class BooleanFieldTests(unittest.TestCase):
         b4 = NullBooleanModel.objects.get(pk=b3.pk)
         self.assertTrue(isinstance(b4.nbfield, bool))
         self.assertEqual(b4.nbfield, False)
+
+        # http://code.djangoproject.com/ticket/13293
+        # Verify that when an extra clause exists, the boolean
+        # conversions are applied with an offset
+        b5 = BooleanModel.objects.all().extra(
+            select={'string_length': 'LENGTH(string)'})[0]
+        self.assertFalse(isinstance(b5.pk, bool))
 
 class ChoicesTests(django.test.TestCase):
     def test_choices_and_field_display(self):

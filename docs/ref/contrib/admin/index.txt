@@ -737,6 +737,15 @@ templates used by the :class:`ModelAdmin` views:
     Path to a custom template, used by :meth:`delete_view` for displaying a
     confirmation page when deleting one or more objects.
 
+.. attribute:: ModelAdmin.delete_selected_confirmation_template
+
+    .. versionadded:: 1.2
+
+    Path to a custom template, used by the :meth:`delete_selected`
+    action method for displaying a confirmation page when deleting one
+    or more objects. See the :ref:`actions
+    documentation<ref-contrib-admin-actions>`.
+
 .. attribute:: ModelAdmin.object_history_template
 
     Path to a custom template, used by :meth:`history_view`.
@@ -928,6 +937,14 @@ on your ``ModelAdmin``::
 
 Keep in mind that this will be prepended with ``MEDIA_URL``. The same rules
 apply as :ref:`regular media definitions on forms <topics-forms-media>`.
+
+Django admin Javascript makes use of the `jQuery`_ library. To avoid
+conflict with user scripts, Django's jQuery is namespaced as
+``django.jQuery``. If you want to use jQuery in your own admin
+JavaScript without including a second copy, you can use the
+``django.jQuery`` object on changelist and add/edit views.
+
+.. _jQuery: http://jquery.com
 
 Adding custom validation to the admin
 -------------------------------------
